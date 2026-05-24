@@ -135,8 +135,8 @@ static void uac_reset_pcm_stream(struct pvt* const pvt, snd_pcm_t* const pcm, co
         case SND_PCM_STATE_SUSPENDED: {
             const int drop_res = snd_pcm_drop(pcm);
             if (drop_res && drop_res != -EBADFD) {
-                ast_log(LOG_WARNING, "[%s][ALSA][%s] Drop before call reset failed - state:%s err:'%s'\n",
-                        PVT_ID(pvt), direction, snd_pcm_state_name(state), snd_strerror(drop_res));
+                ast_log(LOG_WARNING, "[%s][ALSA][%s] Drop before call reset failed - state:%s err:'%s'\n", PVT_ID(pvt), direction, snd_pcm_state_name(state),
+                        snd_strerror(drop_res));
             }
             break;
         }
@@ -147,16 +147,16 @@ static void uac_reset_pcm_stream(struct pvt* const pvt, snd_pcm_t* const pcm, co
 
     const int prepare_res = snd_pcm_prepare(pcm);
     if (prepare_res && prepare_res != -EBADFD) {
-        ast_log(LOG_WARNING, "[%s][ALSA][%s] Prepare during call reset failed - state:%s err:'%s'\n",
-                PVT_ID(pvt), direction, snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(prepare_res));
+        ast_log(LOG_WARNING, "[%s][ALSA][%s] Prepare during call reset failed - state:%s err:'%s'\n", PVT_ID(pvt), direction,
+                snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(prepare_res));
         return;
     }
 
     if (start) {
         const int start_res = snd_pcm_start(pcm);
         if (start_res && start_res != -EBADFD) {
-            ast_log(LOG_WARNING, "[%s][ALSA][%s] Start during call reset failed - state:%s err:'%s'\n",
-                    PVT_ID(pvt), direction, snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(start_res));
+            ast_log(LOG_WARNING, "[%s][ALSA][%s] Start during call reset failed - state:%s err:'%s'\n", PVT_ID(pvt), direction,
+                    snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(start_res));
         }
     }
 }

@@ -525,8 +525,7 @@ static struct ast_frame* channel_read_uac(struct cpvt* cpvt, struct pvt* pvt, si
             /* HOMENICHAT: explicit start on libasound >=1.2.6 */
             const int sres = snd_pcm_start(pvt->icard);
             if (sres && sres != -EBADFD) {
-                ast_log(LOG_ERROR, "[%s][ALSA][CAPTURE] Start failed: %s\n",
-                        PVT_ID(pvt), snd_strerror(sres));
+                ast_log(LOG_ERROR, "[%s][ALSA][CAPTURE] Start failed: %s\n", PVT_ID(pvt), snd_strerror(sres));
                 return NULL;
             }
         }
