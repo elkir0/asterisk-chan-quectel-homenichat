@@ -65,7 +65,7 @@ IF(IS_DIRECTORY ${CMAKE_SOURCE_DIR}/.git)
         SET(OPENWRT_PACKAGE 1)
     ELSE()
         UNSET(CHAN_STATUS)
-        MESSAGE(FATAL_ERROR "Git - unable to describe")
+        MESSAGE(WARNING "Git - unable to describe, using timestamp version")
     ENDIF()
 
     EXECUTE_PROCESS(
