@@ -95,6 +95,30 @@ EC25 + libasound 1.2.6:
     Asterisk's frame size — pollfd fires every 20 ms, exactly matching
     the read rate.
 
+## Required runtime EC25 settings
+
+The chan_quectel patches above fix the host/ALSA side.  The EC25 modem
+itself also needs three NV-saved AT settings tuned for this stack — these
+do not belong in the chan_quectel `.so` (they are per-modem firmware
+state) but they are essential for the audio to actually be audible and
+to ride on LTE instead of falling back to 3G:
+
+| AT setting | Value | Why |
+|---|---|---|
+| `AT+QRXGAIN` | **16384** (2× unity) | Default 8192 gives chan_quectel a capture signal ~24 dB below nominal — `arecord` direct on the same hw card gets mean abs ~210, chan_quectel sees ~13.  Bumping RX 2× brings capture to parity with `arecord`.  Empirically measured via MixMonitor reads. |
+| `AT+QMIC` | **4096,4096** (0.5× unity) | Compensates for the 2× RX boost on the Echo round-trip: without it, the audio sent back over GSM saturates and clips. |
+| `AT+QPCMV` | **1,2** (force-cycle =0 then =1,2 on each preflight) | Required for USB Audio Class.  The cycle is needed because after a USB unplug/replug or `AT+CFUN=1,1`, the EC25 reports QPCMV=1,2 while audio does not actually flow.  Toggling =0 then =1,2 re-initializes the USB Audio Class endpoints.  Reference: IchthysMaranatha/asterisk-chan-quectel discussion #2 (abdofallah, 2025-05-02). |
+| `AT+QMBNCFG="AutoSel"` | **1** | Without it the modem stays on no carrier profile and IMS never moves from `"ims",1,0` (enabled-not-registered) to `"ims",1,1` (registered).  With it the `ROW_Generic_3GPP` profile is picked automatically and IMS SIP REGISTER succeeds. |
+| `AT+CGDCONT=5,"IPV4V6","ims"` | (context 5) | Defines the IMS APN PDP context.  Required for VoLTE call routing; without it, calls fall back to CSFB (3G WCDMA, Mode 4 in `quectel show devices`) instead of staying on LTE (Mode 8). |
+| `AT+QCFG="ims"` | **1** (first param) | Force IMS on.  Combined with `AutoSel=1` + the IMS APN PDP context, this yields `+QCFG: "ims",1,1` after a modem reset and a real VoLTE call (LTE simultaneous voice+data). |
+
+All these are applied automatically by
+`homenichat-serv/scripts/bliiot/ec25-volte-preflight.sh` (commit
+`208a63f`) via the `homenichat-ec25-volte-preflight.service` systemd
+unit at boot.  A one-shot `AT&W` + `AT+CFUN=1,1` is required after a
+fresh deployment to persist the values and let MBN AutoSel pick the
+profile.
+
 ## Live validation
 
 Tested on `homenibox@192.168.1.72` (Raspberry Pi CM4 + EC25-EUX
@@ -104,7 +128,11 @@ firmware A19, Ubuntu 22.04.5 LTS, kernel 5.15.0-1061-raspi):
 |---|---|---|
 | Echo() over LTE, 14 s call | 0 byte read / 0 byte written, both PCMs PREPARED | 1385 frames read / 1399 frames written, both PCMs RUNNING, 0 short frame |
 | Playback(hello-world / demo-congrats / tt-monkeys) | not testable (Echo never produced any audio) | clear playback |
-| Echo() listener feedback | silence / faint crepitations / saccaded | crisp echo with normal phone-call latency |
+| Echo() listener feedback | silence / faint crepitations / saccaded / saturated | crisp clean echo at normal phone-call level |
+| Capture amplitude (read.wav from MixMonitor) | mean abs 13, peak ±1435 | mean abs 202, peak ±11024 |
+| Network mode during call | `Mode 4 = WCDMA` (CSFB 3G voice) | `Mode 8 = LTE` (VoLTE) |
+| Simultaneous data during voice call | n/a — CSFB drops LTE data | 25/25 pings to 8.8.8.8 received, 0 % loss, 55–90 ms latency throughout |
+| IMS registration state | `+QCFG: "ims",1,0` (enabled, not registered) | `+QCFG: "ims",1,1` (registered) |
 
 ## Build
 
