@@ -520,7 +520,16 @@ static struct ast_frame* channel_read_uac(struct cpvt* cpvt, struct pvt* pvt, si
             return NULL;
         }
 
-        case SND_PCM_STATE_PREPARED:
+        case SND_PCM_STATE_PREPARED: {
+            /* HOMENICHAT: explicit start on libasound >=1.2.6 */
+            const int sres = snd_pcm_start(pvt->icard);
+            if (sres && sres != -EBADFD) {
+                ast_log(LOG_ERROR, "[%s][ALSA][CAPTURE] Start failed: %s\n",
+                        PVT_ID(pvt), snd_strerror(sres));
+                return NULL;
+            }
+        }
+        /* fallthrough */
         case SND_PCM_STATE_RUNNING:
             break;
 
@@ -614,8 +623,10 @@ static struct ast_frame* channel_read(struct ast_channel* channel)
         ast_timer_ack(pvt->a_timer, 1);
         if (CPVT_IS_MASTER(cpvt)) {
             if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE) {
-                // TODO: implement timing_write_uac
-                ast_log(LOG_WARNING, "[%s] Multiparty calls not supported in UAC mode\n", PVT_ID(pvt));
+                /* HOMENICHAT: in UAC mode the capture stream is started
+                 * explicitly at CALL_STATE_ACTIVE (see cpvt.c). The
+                 * pollfd drives subsequent reads — do NOT call read_uac
+                 * here or we double the read rate. Just ack the timer. */
             } else {
                 timing_write_tty(pvt, frame_size);
             }

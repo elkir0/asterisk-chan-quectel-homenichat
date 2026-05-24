@@ -84,16 +84,8 @@ static int soundcard_init(struct pvt* pvt)
         return -1;
     }
 
-    const int err = snd_pcm_link(pvt->icard, pvt->ocard);
-    if (err < 0) {
-        ast_log(LOG_ERROR, "[%s][ALSA] Couldn't link devices: %s\n", PVT_ID(pvt), snd_strerror(err));
-        snd_pcm_close(pvt->icard);
-        pvt->icard = NULL;
-        snd_pcm_close(pvt->ocard);
-        pvt->ocard          = NULL;
-        pvt->ocard_channels = 0u;
-        return -1;
-    }
+    /* HOMENICHAT: snd_pcm_link disabled on libasound 1.2.6+ (Ubuntu 22.04). */
+    (void)0;
 
     ast_verb(2, "[%s] Sound card '%s' initialized\n", PVT_ID(pvt), CONF_UNIQ(pvt, alsadev));
     return 0;
@@ -483,6 +475,11 @@ void pvt_on_create_1st_channel(struct pvt* pvt)
     const size_t silence_buf_size      = 2u * pvt_get_audio_frame_size(PTIME_PLAYBACK, fmt);
     pvt->silence_buf                   = ast_calloc(1, silence_buf_size);
 
+    /* HOMENICHAT: always open the audio timer.  Without it, single-party
+     * UAC has no wake source when the ALSA capture pollfd is silent in
+     * PREPARED state (Linux 5.15+ xhci_hcd snd_usb_audio). */
+    pvt->a_timer = ast_timer_open();
+
     if (CONF_SHARED(pvt, multiparty)) {
         if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE) {
             ast_log(LOG_ERROR, "[%s] Multiparty mode not supported in UAC mode\n", PVT_ID(pvt));
@@ -490,8 +487,6 @@ void pvt_on_create_1st_channel(struct pvt* pvt)
             const size_t write_buf_size = 5u * pvt_get_audio_frame_size(PTIME_PLAYBACK, fmt);
             pvt->write_buf              = ast_calloc(1, write_buf_size);
             mixb_init(&pvt->write_mixb, pvt->write_buf, write_buf_size);
-
-            pvt->a_timer = ast_timer_open();
         }
     }
 }

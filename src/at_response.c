@@ -985,6 +985,7 @@ static void handle_clcc(struct pvt* const pvt, const unsigned int call_idx, cons
         switch (state) {
             case CALL_STATE_DIALING:
             case CALL_STATE_ALERTING:
+            case CALL_STATE_ACTIVE:
                 cpvt = pvt_channel_find_last_initialized(pvt);
 
                 if (mpty) {
