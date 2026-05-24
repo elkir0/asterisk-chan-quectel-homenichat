@@ -89,7 +89,29 @@ keeps ALSA capture close to the wall clock on the CM4/xhci stack while
 still allowing a small amount of jitter. The validated production build
 uses this threshold.
 
-### 7. `src/ptime-config.h.in` — `PTIME_BUFFER=400`, `PTIME_EXTRA=0`
+### 7. `src/channel.c` — recover only the PCM stream that XRUNed
+
+Playback and capture are intentionally unlinked in this fork. When ALSA
+reports `SND_PCM_STATE_XRUN`, the recovery path now prepares only the
+stream that reported the XRUN. Preparing the other stream during an
+active bridge can fail with `EBUSY` (`Device or resource busy`), which
+tears down the Quectel channel and makes Asterisk send a BYE to the
+mobile app. This was reproduced live when toggling the iOS/Android
+speaker button during a GSM outbound call: WebRTC stayed connected, then
+chan_quectel logged `[ALSA][CAPTURE] Prepare failed` from the playback
+recovery path and the GSM bridge was dropped.
+
+### 8. `src/cpvt.c` — reset UAC PCM streams for each call lifecycle
+
+The EC25 UAC PCM handles live for the device lifetime, not for one call.
+After a call, ALSA can keep stale playback/capture buffer state and the
+next call may start with repeated `EAGAIN` writes or capture stuck in
+`PREPARED`. `cpvt_call_disactivate` now drops/prepares both streams, and
+`CALL_STATE_ACTIVE` starts the next call by preparing playback, preparing
+capture, and explicitly starting capture. Each stream is still handled
+independently; the playback reset never prepares the active capture stream.
+
+### 9. `src/ptime-config.h.in` — `PTIME_BUFFER=400`, `PTIME_EXTRA=0`
 
 Two tuning constants that turned out to matter on kernel 5.15 + xhci +
 EC25 + libasound 1.2.6:

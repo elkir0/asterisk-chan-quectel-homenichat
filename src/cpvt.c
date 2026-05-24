@@ -120,6 +120,57 @@ static void relink_to_sys_chan(const struct cpvt* const cpvt, struct pvt* const 
     }
 }
 
+static void uac_reset_pcm_stream(struct pvt* const pvt, snd_pcm_t* const pcm, const char* const direction, const int start)
+{
+    if (!pcm) {
+        return;
+    }
+
+    const snd_pcm_state_t state = snd_pcm_state(pcm);
+    switch (state) {
+        case SND_PCM_STATE_RUNNING:
+        case SND_PCM_STATE_XRUN:
+        case SND_PCM_STATE_DRAINING:
+        case SND_PCM_STATE_PAUSED:
+        case SND_PCM_STATE_SUSPENDED: {
+            const int drop_res = snd_pcm_drop(pcm);
+            if (drop_res && drop_res != -EBADFD) {
+                ast_log(LOG_WARNING, "[%s][ALSA][%s] Drop before call reset failed - state:%s err:'%s'\n",
+                        PVT_ID(pvt), direction, snd_pcm_state_name(state), snd_strerror(drop_res));
+            }
+            break;
+        }
+
+        default:
+            break;
+    }
+
+    const int prepare_res = snd_pcm_prepare(pcm);
+    if (prepare_res && prepare_res != -EBADFD) {
+        ast_log(LOG_WARNING, "[%s][ALSA][%s] Prepare during call reset failed - state:%s err:'%s'\n",
+                PVT_ID(pvt), direction, snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(prepare_res));
+        return;
+    }
+
+    if (start) {
+        const int start_res = snd_pcm_start(pcm);
+        if (start_res && start_res != -EBADFD) {
+            ast_log(LOG_WARNING, "[%s][ALSA][%s] Start during call reset failed - state:%s err:'%s'\n",
+                    PVT_ID(pvt), direction, snd_pcm_state_name(snd_pcm_state(pcm)), snd_strerror(start_res));
+        }
+    }
+}
+
+static void uac_reset_call_audio(struct pvt* const pvt, const int start_capture)
+{
+    if (!pvt || CONF_UNIQ(pvt, uac) <= TRIBOOL_FALSE) {
+        return;
+    }
+
+    uac_reset_pcm_stream(pvt, pvt->ocard, "PLAYBACK", 0);
+    uac_reset_pcm_stream(pvt, pvt->icard, "CAPTURE", start_capture);
+}
+
 void cpvt_free(struct cpvt* cpvt)
 {
     struct pvt* const pvt = cpvt->pvt;
@@ -155,8 +206,7 @@ void cpvt_call_disactivate(struct cpvt* const cpvt)
     struct pvt* const pvt = cpvt->pvt;
 
     if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE) {
-        // snd_pcm_drop(pvt->icard);
-        // snd_pcm_drop(pvt->ocard);
+        uac_reset_call_audio(pvt, 0);
     } else {
         if (CONF_SHARED(pvt, multiparty)) {
             mixb_detach(&pvt->write_mixb, &cpvt->mixstream);
@@ -309,21 +359,10 @@ static void change_state(struct cpvt* const cpvt, struct pvt* const pvt, struct 
 
         case CALL_STATE_ACTIVE:
             cpvt_call_activate(cpvt);
-            /* HOMENICHAT: explicitly start the UAC capture stream on call
-             * activation. On libasound 1.2.6 + kernel 5.15 xhci, the ALSA
-             * capture stream stays in PREPARED state and never auto-starts,
-             * so the pollfd never fires POLLIN and channel_read is never
-             * called. Kick it once here. */
-            if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE && pvt && pvt->icard) {
-                const snd_pcm_state_t _s = snd_pcm_state(pvt->icard);
-                if (_s == SND_PCM_STATE_PREPARED) {
-                    const int _r = snd_pcm_start(pvt->icard);
-                    if (_r && _r != -EBADFD) {
-                        ast_log(LOG_WARNING, "[%s][ALSA][CAPTURE] explicit start on ACTIVE failed: %s\n",
-                                PVT_ID(pvt), snd_strerror(_r));
-                    }
-                }
-            }
+            /* HOMENICHAT: start every UAC call with clean ALSA buffers. On the
+             * CM4 EC25 UAC stack, stale playback/capture state can otherwise
+             * produce EAGAIN loops or keep capture in PREPARED with no POLLIN. */
+            uac_reset_call_audio(pvt, 1);
             if (oldstate == CALL_STATE_ONHOLD) {
                 ast_debug(1, "[%s] Unhold call idx:%d\n", PVT_ID(pvt), call_idx);
                 cpvt_control(cpvt, AST_CONTROL_UNHOLD);
