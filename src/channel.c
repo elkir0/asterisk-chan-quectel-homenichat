@@ -547,7 +547,7 @@ static struct ast_frame* channel_read_uac(struct cpvt* cpvt, struct pvt* pvt, si
         ast_log(LOG_WARNING, "[%s][ALSA][CAPTURE][F:%d] Not enough audio frames: %d\n", PVT_ID(pvt), (int)frames, (int)avail_frames);
         return NULL;
     } else {
-        const snd_pcm_sframes_t limit = 4 * frames;
+        const snd_pcm_sframes_t limit = (3 * frames) / 2; /* HOMENICHAT: balanced threshold */
         if (avail_frames >= limit) {
             const snd_pcm_sframes_t skipped = snd_pcm_forward(pvt->icard, avail_frames - (2 * frames));
             ast_log(LOG_NOTICE, "[%s][ALSA][CAPTURE][F:%d] Too many audio frames available: %d, skipped %d\n", PVT_ID(pvt), (int)frames, (int)avail_frames,
@@ -621,15 +621,15 @@ static struct ast_frame* channel_read(struct ast_channel* channel)
 
     if (fdno == 1) {
         ast_timer_ack(pvt->a_timer, 1);
+        if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE) {
+            /* HOMENICHAT: the timer is only a wake source for UAC. Returning
+             * silence here creates an extra 20 ms audio frame between real
+             * ALSA capture frames, stretching audio to half speed. */
+            ast_debug(7, "[%s] *** UAC timing ack ***\n", PVT_ID(pvt));
+            return &ast_null_frame;
+        }
         if (CPVT_IS_MASTER(cpvt)) {
-            if (CONF_UNIQ(pvt, uac) > TRIBOOL_FALSE) {
-                /* HOMENICHAT: in UAC mode the capture stream is started
-                 * explicitly at CALL_STATE_ACTIVE (see cpvt.c). The
-                 * pollfd drives subsequent reads — do NOT call read_uac
-                 * here or we double the read rate. Just ack the timer. */
-            } else {
-                timing_write_tty(pvt, frame_size);
-            }
+            timing_write_tty(pvt, frame_size);
             ast_debug(7, "[%s] *** timing ***\n", PVT_ID(pvt));
         }
         goto f_ret;

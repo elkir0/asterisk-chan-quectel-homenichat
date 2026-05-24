@@ -1553,7 +1553,7 @@ static unsigned int get_default_framing() { return ast_format_get_default_ms(ast
 
 static void append_fmt(struct ast_format_cap* cap, struct ast_format* fmt) { ast_format_cap_append(cap, fmt, PTIME_CAPTURE); }
 
-static unsigned int get_default_framing() { return PTIME_CAPTURE }
+static unsigned int get_default_framing() { return PTIME_CAPTURE; }
 
 #endif
 

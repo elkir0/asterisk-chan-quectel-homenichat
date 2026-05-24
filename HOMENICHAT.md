@@ -11,10 +11,10 @@ based hw_params, refined locking via AO2). It is the right base for any
 fresh deployment.
 
 Without the patches below, on the CM4/Ubuntu 22.04 reference stack, the
-audio path stays silent or produces saccaded/distorted output even though
-the EC25 modem itself transmits clean audio (validated by raw `arecord` /
-`aplay` against the modem ALSA card during a `ATD` call without
-chan_quectel).
+audio path stays silent or produces slowed, bursty, saccaded output even
+though the EC25 modem itself transmits clean audio (validated by raw
+`arecord` / `aplay` against the modem ALSA card during a `ATD` call
+without chan_quectel).
 
 ## What this branch changes
 
@@ -64,7 +64,7 @@ first `.read` callback. Once RUNNING, the ALSA pollfd starts firing
 POLLIN normally and the rest of the read path works as upstream
 intended.
 
-### 5. `src/channel.c` — no `channel_read_uac` on every timer tick
+### 5. `src/channel.c` — UAC timer is a wake source, not an audio source
 
 The original code logs `"Multiparty calls not supported in UAC mode"`
 and returns silence on every timer tick. Upstream `ao2` didn't fix
@@ -74,7 +74,22 @@ at the correct rate. Calling `channel_read_uac` on every timer tick on
 top of pollfd-driven reads would double the read rate and over-feed the
 playback side.
 
-### 6. `src/ptime-config.h.in` — `PTIME_BUFFER=400`, `PTIME_EXTRA=0`
+The final CM4 production fix is stricter: when Asterisk wakes the
+channel on the auxiliary timer fd (`fdno == 1`) in UAC mode, the code
+acks the timer and returns `ast_null_frame`. It must not fall through
+to the common silence-frame return path. Falling through injected one
+extra 20 ms silence frame between real 20 ms ALSA capture frames. The
+scientific symptom was a 20 s CDR producing a 40.000 s WAV and iPhone
+audio that sounded half-speed and bursty.
+
+### 6. `src/channel.c` — balanced UAC capture backlog threshold
+
+The UAC capture backlog threshold is set to `(3 * frames) / 2`. This
+keeps ALSA capture close to the wall clock on the CM4/xhci stack while
+still allowing a small amount of jitter. The validated production build
+uses this threshold.
+
+### 7. `src/ptime-config.h.in` — `PTIME_BUFFER=400`, `PTIME_EXTRA=0`
 
 Two tuning constants that turned out to matter on kernel 5.15 + xhci +
 EC25 + libasound 1.2.6:
@@ -127,6 +142,8 @@ firmware A19, Ubuntu 22.04.5 LTS, kernel 5.15.0-1061-raspi):
 | Test | Before | After |
 |---|---|---|
 | Echo() over LTE, 14 s call | 0 byte read / 0 byte written, both PCMs PREPARED | 1385 frames read / 1399 frames written, both PCMs RUNNING, 0 short frame |
+| Record() to GSM voicemail, 20 s CDR | WAV duration 40.000 s (extra timer silence frames) | WAV duration 20.000 s |
+| Homenichat iPhone app -> GSM voicemail | slowed + bursty audio | clean audio, validated by human listening test |
 | Playback(hello-world / demo-congrats / tt-monkeys) | not testable (Echo never produced any audio) | clear playback |
 | Echo() listener feedback | silence / faint crepitations / saccaded / saturated | crisp clean echo at normal phone-call level |
 | Capture amplitude (read.wav from MixMonitor) | mean abs 13, peak ±1435 | mean abs 202, peak ±11024 |
