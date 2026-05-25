@@ -99,19 +99,13 @@ void pvt_disconnect(struct pvt* pvt)
 {
     if (!PVT_NO_CHANS(pvt)) {
         struct cpvt* cpvt;
-        AST_LIST_TRAVERSE(&(pvt->chans), cpvt, entry) {
-            ast_atomic_fetchsub_uint32(&PVT_STATE(pvt, chan_count[cpvt->state]), 1);
-            ast_atomic_fetchsub_uint32(&PVT_STATE(pvt, chansno), 1);
-
+        AST_LIST_TRAVERSE_SAFE_BEGIN(&(pvt->chans), cpvt, entry) {
             at_hangup_immediately(cpvt, AST_CAUSE_NORMAL_UNSPECIFIED);
             CPVT_SET_FLAG(cpvt, CALL_FLAG_DISCONNECTING);
             CPVT_RESET_FLAG(cpvt, CALL_FLAG_NEED_HANGUP);
             cpvt_change_state(cpvt, CALL_STATE_RELEASED, AST_CAUSE_NORMAL_UNSPECIFIED);
         }
-
-        while (!AST_LIST_EMPTY(&(pvt->chans))) {
-            AST_LIST_REMOVE_HEAD(&(pvt->chans), entry);
-        }
+        AST_LIST_TRAVERSE_SAFE_END;
     }
 
     if (pvt->initialized) {
@@ -1514,7 +1508,7 @@ int pvt_direct_write(struct pvt* pvt, const char* buf, size_t count)
 static struct ast_threadpool* threadpool_create()
 {
     static const struct ast_threadpool_options options = {
-        .version = AST_THREADPOOL_OPTIONS_VERSION, .idle_timeout = 300, .auto_increment = 1, .initial_size = 0, .max_size = 0};
+        .version = AST_THREADPOOL_OPTIONS_VERSION, .idle_timeout = 300, .auto_increment = 1, .initial_size = 0, .max_size = 8};
 
     return ast_threadpool_create("chan-quectel", NULL, &options);
 }

@@ -108,27 +108,11 @@ static int reopen_audio_port(struct pvt* pvt)
     return (pvt->audio_fd > 0);
 }
 
-static void pcm_show_playback_state(struct pvt* const pvt) { pcm_show_state(4, "PLAYBACK", PVT_ID(pvt), pvt->ocard); }
-
-static void pcm_show_capture_state(struct pvt* const pvt) { pcm_show_state(4, "CAPTURE", PVT_ID(pvt), pvt->icard); }
-
-static int pcm_show_playback_state_taskproc(void* tpdata) { return PVT_TASKPROC_TRYLOCK_AND_EXECUTE(tpdata, pcm_show_playback_state); }
-
-static int pcm_show_capture_state_taskproc(void* tpdata) { return PVT_TASKPROC_TRYLOCK_AND_EXECUTE(tpdata, pcm_show_capture_state); }
-
-static void push_pcm_state_taskprocs(struct ast_threadpool* threadpool, struct pvt* const pvt)
-{
-    if (ast_threadpool_push(threadpool, pcm_show_playback_state_taskproc, pvt)) {
-        ast_debug(5, "[%s] Unable to show ALSA playback state\n", PVT_ID(pvt));
-    }
-    if (ast_threadpool_push(threadpool, pcm_show_capture_state_taskproc, pvt)) {
-        ast_debug(5, "[%s] Unable to show ALSA capture state\n", PVT_ID(pvt));
-    }
-}
-
 static int check_dev_status(struct pvt* const pvt, struct ast_threadpool* threadpool)
 {
     int err;
+    (void)threadpool;
+
     if (tty_status(pvt->data_fd, &err)) {
         ast_log(LOG_ERROR, "[%s][DATA] Lost connection: %s\n", PVT_ID(pvt), strerror(err));
         return -1;
@@ -147,12 +131,9 @@ static int check_dev_status(struct pvt* const pvt, struct ast_threadpool* thread
             break;
 
         case TRIBOOL_TRUE:
-            push_pcm_state_taskprocs(threadpool, pvt);
             break;
 
         case TRIBOOL_NONE:
-            push_pcm_state_taskprocs(threadpool, pvt);
-
             if (pcm_status(pvt->ocard, pvt->icard)) {
                 ast_log(LOG_ERROR, "[%s][AUDIO][ALSA] Lost connection\n", PVT_ID(pvt));
                 return -1;

@@ -94,18 +94,22 @@ struct cpvt* cpvt_alloc(struct pvt* pvt, int call_idx, unsigned dir, call_state_
     return cpvt;
 }
 
-static void decrease_chan_counters(const struct cpvt* const cpvt, struct pvt* const pvt)
+static unsigned int decrease_chan_counters(const struct cpvt* const cpvt, struct pvt* const pvt)
 {
     struct cpvt* found;
+    unsigned int remaining = ast_atomic_fetch_uint32(&PVT_STATE(pvt, chansno));
 
     AST_LIST_TRAVERSE_SAFE_BEGIN(&pvt->chans, found, entry)
         if (found == cpvt) {
             AST_LIST_REMOVE_CURRENT(entry);
             ast_atomic_fetchsub_uint32(&PVT_STATE(pvt, chan_count[cpvt->state]), 1);
-            ast_atomic_fetchsub_uint32(&PVT_STATE(pvt, chansno), 1);
+            const unsigned int previous = ast_atomic_fetchsub_uint32(&PVT_STATE(pvt, chansno), 1);
+            remaining                   = previous > 0 ? previous - 1 : 0;
             break;
         }
     AST_LIST_TRAVERSE_SAFE_END;
+
+    return remaining;
 }
 
 static void relink_to_sys_chan(const struct cpvt* const cpvt, struct pvt* const pvt)
@@ -178,13 +182,15 @@ void cpvt_free(struct cpvt* cpvt)
     ast_debug(3, "[%s] Destroy cpvt - idx:%d dir:%d state:%s flags:%d channel:%s\n", PVT_ID(pvt), cpvt->call_idx, CPVT_DIRECTION(cpvt),
               call_state2str(cpvt->state), cpvt->flags, cpvt->channel ? "attached" : "detached");
 
-    if (!CPVT_TEST_FLAG(cpvt, CALL_FLAG_DISCONNECTING)) {
+    const unsigned int remaining = decrease_chan_counters(cpvt, pvt);
+    if (!remaining) {
+        pvt_on_remove_last_channel(pvt);
+    }
+
+    if (!CPVT_TEST_FLAG(cpvt, CALL_FLAG_DISCONNECTING) && !remaining) {
         if (PVT_NO_CHANS(pvt)) {
-            pvt_on_remove_last_channel(pvt);
             pvt_try_restate(pvt);
         }
-
-        decrease_chan_counters(cpvt, pvt);
     }
 
     relink_to_sys_chan(cpvt, pvt);

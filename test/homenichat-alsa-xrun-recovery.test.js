@@ -4,6 +4,7 @@ const path = require('path');
 
 const channelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'channel.c'), 'utf8');
 const cpvtSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'cpvt.c'), 'utf8');
+const chanQuectelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'chan_quectel.c'), 'utf8');
 
 function functionBody(source, name) {
   const marker = `${name}(`;
@@ -102,8 +103,64 @@ function testCallAudioLifecycleResetsUacPcmHandles() {
   );
 }
 
+function testCpvtFreeRemovesChannelBeforeLastChannelCleanup() {
+  const body = functionBody(cpvtSource, 'cpvt_free');
+  const decreaseIndex = body.indexOf('decrease_chan_counters(cpvt, pvt)');
+  const cleanupIndex = body.indexOf('pvt_on_remove_last_channel(pvt)');
+
+  assert.ok(decreaseIndex >= 0, 'cpvt_free must remove the cpvt from pvt->chans');
+  assert.ok(cleanupIndex >= 0, 'cpvt_free must run last-channel cleanup');
+  assert.ok(
+    decreaseIndex < cleanupIndex,
+    'cpvt_free must decrement/remove the channel before checking PVT_NO_CHANS'
+  );
+}
+
+function testPvtDisconnectLetsCpvtFreeOwnChannelCounters() {
+  const body = functionBody(chanQuectelSource, 'pvt_disconnect');
+
+  assert.doesNotMatch(
+    body,
+    /ast_atomic_fetchsub_uint32\(&PVT_STATE\(pvt,\s*chan_count/,
+    'pvt_disconnect must not manually decrement per-state channel counters'
+  );
+  assert.doesNotMatch(
+    body,
+    /ast_atomic_fetchsub_uint32\(&PVT_STATE\(pvt,\s*chansno/,
+    'pvt_disconnect must not manually decrement chansno'
+  );
+  assert.doesNotMatch(
+    body,
+    /AST_LIST_REMOVE_HEAD\(&\(pvt->chans\),\s*entry\)/,
+    'pvt_disconnect must not raw-remove cpvt list nodes after cpvt_change_state'
+  );
+  assert.match(
+    body,
+    /AST_LIST_TRAVERSE_SAFE_BEGIN\(&\(pvt->chans\),/,
+    'pvt_disconnect must traverse the cpvt list with removal-safe traversal'
+  );
+}
+
+function testChanQuectelThreadpoolIsBounded() {
+  const body = functionBody(chanQuectelSource, 'threadpool_create');
+
+  assert.match(
+    body,
+    /\.max_size\s*=\s*[1-9][0-9]*/,
+    'chan_quectel threadpool max_size must be bounded to prevent worker runaway'
+  );
+  assert.doesNotMatch(
+    body,
+    /\.max_size\s*=\s*0/,
+    'chan_quectel threadpool must not be unbounded'
+  );
+}
+
 testPlaybackXrunOnlyRecoversPlaybackPcm();
 testCaptureXrunOnlyRecoversCapturePcm();
 testCallAudioLifecycleResetsUacPcmHandles();
+testCpvtFreeRemovesChannelBeforeLastChannelCleanup();
+testPvtDisconnectLetsCpvtFreeOwnChannelCounters();
+testChanQuectelThreadpoolIsBounded();
 
 console.log('homenichat ALSA XRUN recovery tests passed');
