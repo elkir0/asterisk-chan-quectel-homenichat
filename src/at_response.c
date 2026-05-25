@@ -143,6 +143,28 @@ static void request_clcc(struct pvt* pvt)
     }
 }
 
+static void release_voice_channels(struct pvt* const pvt, int only_unlisted, int cause, const char* reason)
+{
+    struct cpvt* cpvt;
+
+    pvt->ring     = 0;
+    pvt->dialing  = 0;
+    pvt->cwaiting = 0;
+
+    AST_LIST_TRAVERSE_SAFE_BEGIN(&pvt->chans, cpvt, entry) {
+        const int releasable = !CPVT_IS_LOCAL(cpvt) && cpvt->state != CALL_STATE_INIT && cpvt->state != CALL_STATE_RELEASED;
+        const int stale      = !only_unlisted || !CPVT_TEST_FLAG(cpvt, CALL_FLAG_ALIVE);
+
+        if (releasable && stale) {
+            CPVT_RESET_FLAG(cpvt, CALL_FLAG_NEED_HANGUP);
+            ast_log(LOG_NOTICE, "[%s] Releasing stale voice call idx:%d state:%s after %s\n", PVT_ID(pvt), cpvt->call_idx, call_state2str(cpvt->state),
+                    reason);
+            cpvt_change_state(cpvt, CALL_STATE_RELEASED, cause);
+        }
+    }
+    AST_LIST_TRAVERSE_SAFE_END;
+}
+
 static int at_response_cmgs_error(struct pvt*, const at_queue_task_t* const);
 
 static void __attribute__((format(printf, 7, 8))) at_ok_response_log(int level, const char* file, int line, const char* function, const struct pvt* const pvt,
@@ -1171,13 +1193,15 @@ static int at_response_clcc(struct pvt* const pvt, const struct ast_str* const r
             continue;
         }
 
-        if (mode > CALL_STATE_WAITING) {
+        if (state > CALL_STATE_WAITING) {
             ast_debug(4, "[%s] CLCC - invalid call state, idx:%u dir:%u state:%u nubmer:%s\n", PVT_ID(pvt), call_idx, dir, state, number);
             continue;
         }
 
         handle_clcc(pvt, call_idx, dir, state, mode, mpty ? TRIBOOL_TRUE : TRIBOOL_FALSE, number, type);
     }
+
+    release_voice_channels(pvt, 1, AST_CAUSE_NORMAL_CLEARING, "CLCC");
 
     return 0;
 }
@@ -2890,6 +2914,7 @@ int at_response(struct pvt* const pvt, const struct ast_str* const response, con
 
         case RES_NO_CARRIER:
             ast_debug(2, "[%s] Receive NO CARRIER\n", PVT_ID(pvt));
+            release_voice_channels(pvt, 0, AST_CAUSE_NORMAL_CLEARING, "NO CARRIER");
             return 0;
 
         case RES_CPIN:

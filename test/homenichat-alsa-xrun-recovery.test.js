@@ -5,6 +5,7 @@ const path = require('path');
 const channelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'channel.c'), 'utf8');
 const cpvtSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'cpvt.c'), 'utf8');
 const chanQuectelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'chan_quectel.c'), 'utf8');
+const atResponseSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'at_response.c'), 'utf8');
 
 function functionBody(source, name) {
   const marker = `${name}(`;
@@ -156,11 +157,47 @@ function testChanQuectelThreadpoolIsBounded() {
   );
 }
 
+function testCarrierLossReleasesVoiceChannels() {
+  const releaseBody = functionBody(atResponseSource, 'release_voice_channels');
+
+  assert.match(
+    releaseBody,
+    /AST_LIST_TRAVERSE_SAFE_BEGIN\(&pvt->chans,\s*cpvt,\s*entry\)/,
+    'carrier-loss cleanup must traverse pvt channels with removal-safe traversal'
+  );
+  assert.match(
+    releaseBody,
+    /cpvt_change_state\(cpvt,\s*CALL_STATE_RELEASED,\s*cause\)/,
+    'carrier-loss cleanup must release stale cpvts through the normal channel teardown path'
+  );
+  assert.match(
+    releaseBody,
+    /CALL_STATE_INIT/,
+    'carrier-loss cleanup must avoid killing channels that have not been assigned a modem call yet'
+  );
+
+  const noCarrierCase = atResponseSource.match(/case RES_NO_CARRIER:[\s\S]*?return 0;/);
+  assert.ok(noCarrierCase, 'missing RES_NO_CARRIER case');
+  assert.match(
+    noCarrierCase[0],
+    /release_voice_channels\(pvt,\s*0,\s*AST_CAUSE_NORMAL_CLEARING,\s*"NO CARRIER"\)/,
+    'NO CARRIER must release live voice channels instead of only logging'
+  );
+
+  const clccBody = functionBody(atResponseSource, 'at_response_clcc');
+  assert.match(
+    clccBody,
+    /release_voice_channels\(pvt,\s*1,\s*AST_CAUSE_NORMAL_CLEARING,\s*"CLCC"\)/,
+    'CLCC polling must release previously tracked channels no longer listed by the modem'
+  );
+}
+
 testPlaybackXrunOnlyRecoversPlaybackPcm();
 testCaptureXrunOnlyRecoversCapturePcm();
 testCallAudioLifecycleResetsUacPcmHandles();
 testCpvtFreeRemovesChannelBeforeLastChannelCleanup();
 testPvtDisconnectLetsCpvtFreeOwnChannelCounters();
 testChanQuectelThreadpoolIsBounded();
+testCarrierLossReleasesVoiceChannels();
 
 console.log('homenichat ALSA XRUN recovery tests passed');
